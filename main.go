@@ -62,25 +62,27 @@ func main() {
 	}
 
 	// Get environment variables from .env file
-	user := os.Getenv("DB_USERNAME")
-	password := os.Getenv("DB_PASSWORD")
-	dbname := os.Getenv("DB_DATABASE")
 	host := os.Getenv("DB_HOST")
 	port := os.Getenv("DB_PORT")
+	user := os.Getenv("DB_USERNAME")
+	dbname := os.Getenv("DB_DATABASE")
+	password := os.Getenv("DB_PASSWORD")
 	sslmode := os.Getenv("DB_SSLMODE")
+	tableName := os.Getenv("VOICE_CHANNEL_USER_TABLE")
 	api := os.Getenv("API_SERVER")
+	userAgent := os.Getenv("USER_AGENT")
+	securityCode := os.Getenv("SECURITYCODE")
 
 	connStr := fmt.Sprintf("user=%s password=%s dbname=%s host=%s port=%s sslmode=%s", user, password, dbname, host, port, sslmode)
 
 	// Get the current time and format it to a string according to RFC3339
 	now := time.Now()
 	utcNow := now.UTC()
-	twoDaysAgo := utcNow.AddDate(0, 0, -6)           // Lấy ngày 06/08/2024
-	formattedTime := twoDaysAgo.Format(time.RFC3339) // Định dạng thời gian thành chuỗi theo RFC3339
+	twoDaysAgo := utcNow.AddDate(0, 0, -6)
+	formattedTime := twoDaysAgo.Format(time.RFC3339)
 	date := mustParseTime(formattedTime)
-	fmt.Println("Time: ", formattedTime)
 
-	activities, err := FetchActivities(connStr, date)
+	activities, err := FetchActivities(connStr, tableName, date)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -88,51 +90,21 @@ func main() {
 	// Sort by name and creation time
 	SortActivities(activities)
 
-	// In ra danh sách hoạt động
-	fmt.Println("------------------------------------------------------------------------------------------------")
-	fmt.Println("Activities")
-	for _, activity := range activities {
-		fmt.Printf("ID: %d, UserId: %s, ClanID: %d, ChannelID: %d, DisplayName: %s, CreateTime: %s, UpdateTime: %s, Active: %d\n",
-			activity.ID, activity.UserID, activity.ClanID, activity.ChannelID, activity.DisplayName, activity.CreateTime, activity.UpdateTime, activity.Active)
-	}
-
 	// Handle user sessions
 	sessions := processActivities(activities)
-
-	// In ra danh sách phiên hoạt động
-	fmt.Println("------------------------------------------------------------------------------------------------")
-	fmt.Println("Sessions")
-	for _, session := range sessions {
-		fmt.Printf("DisplayName: %s, Email: %s, GoogleID: %s ,StartTime: %s,EndTime: %s\n",
-			session.Name, session.Email, session.GoogleID, session.StartTime.Format(time.RFC3339), session.EndTime.Format(time.RFC3339))
-	}
 
 	// Filters sessions that reside entirely within other sessions
 	filteredSessions := FilterSessions(sessions)
 
-	fmt.Println("------------------------------------------------------------------------------------------------")
-	fmt.Println("filteredSessions")
-	for _, session := range filteredSessions {
-		fmt.Printf("DisplayName: %s, Email: %s, GoogleID: %s ,StartTime: %s,EndTime: %s\n",
-			session.Name, session.Email, session.GoogleID, session.StartTime.Format(time.RFC3339), session.EndTime.Format(time.RFC3339))
-	}
-
 	// Calculate the total time of each opentalk participant during the day
 	totalTime := CalculateTotalTimeForDate(filteredSessions, date)
 
-	fmt.Println("------------------------------------------------------------------------------------------------")
-	fmt.Println("TotalTime")
-	for _, sessionTime := range totalTime {
-		fmt.Printf("Name: %s, Email: %s, GoogleID: %s, TotalTime: %v\n",
-			sessionTime.Name, sessionTime.Email, sessionTime.GoogleID, sessionTime.TotalTime)
-	}
-
 	// Send data to API server
-	SendRequest(api, totalTime)
+	SendRequest(api, userAgent, securityCode, totalTime)
 }
 
 // Get data from database
-func FetchActivities(connStr string, date time.Time) ([]VoiceChannelUser, error) {
+func FetchActivities(connStr string, tableName string, date time.Time) ([]VoiceChannelUser, error) {
 	db, err := sql.Open("postgres", connStr)
 	if err != nil {
 		return nil, err
@@ -143,17 +115,9 @@ func FetchActivities(connStr string, date time.Time) ([]VoiceChannelUser, error)
 	startOfDay := time.Date(date.Year(), date.Month(), date.Day(), 0, 0, 0, 0, time.UTC)
 	endOfDay := startOfDay.Add(24 * time.Hour).Add(-time.Second)
 
-	// Print start and end of day for debugging
-	fmt.Println("startOfDay: ", startOfDay)
-	fmt.Println("endOfDay: ", endOfDay)
-
 	startOfDayStr := startOfDay.Format(time.RFC3339)
 	endOfDayStr := endOfDay.Format(time.RFC3339)
 
-	tableName := os.Getenv("VOICE_CHANNEL_USER_TABLE")
-	if tableName == "" {
-		return nil, fmt.Errorf("table name not set in environment")
-	}
 	query := fmt.Sprintf("SELECT * FROM %s WHERE create_time BETWEEN $1 AND $2", tableName)
 	rows, err := db.Query(query, startOfDayStr, endOfDayStr)
 	if err != nil {
@@ -324,16 +288,11 @@ func mustParseTime(value string) time.Time {
 // Calculate the total activity time of each user within a certain level in 1 day
 func CalculateTotalTimeForDate(sessions []Session, date time.Time) map[string]SessionTime {
 	totalTimeMap := make(map[string]SessionTime)
-	fmt.Println("Time2: ", date)
 
 	// Determine the time interval from 3 to 5 UTC (10 to 12 UTC +7)
 	startOfDay := date.Truncate(24 * time.Hour)
-	fmt.Println("startOfDay: ", startOfDay)
 	start3h := startOfDay.Add(3 * time.Hour)
-	fmt.Println("start3h: ", start3h)
-
 	end5h := startOfDay.Add(5 * time.Hour)
-	fmt.Println("end5h: ", end5h)
 
 	for _, s := range sessions {
 		// Check if the session is on the specified date
@@ -372,7 +331,7 @@ func CalculateTotalTimeForDate(sessions []Session, date time.Time) map[string]Se
 }
 
 // SendRequest sends a POST request with JSON data to the API
-func SendRequest(url string, data interface{}) error {
+func SendRequest(url string, userAgent string, securityCode string, data interface{}) error {
 	// Convert data to JSON
 	jsonData, err := json.Marshal(data)
 	if err != nil {
@@ -386,9 +345,9 @@ func SendRequest(url string, data interface{}) error {
 	}
 
 	// Setup headers
-	req.Header.Set("User-Agent", "Reqable/2.21.0")
+	req.Header.Set("User-Agent", userAgent)
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("securityCode", "12345678")
+	req.Header.Set("securityCode", securityCode)
 
 	// Send request
 	client := &http.Client{}
