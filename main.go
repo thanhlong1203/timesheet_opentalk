@@ -78,7 +78,6 @@ func main() {
 	sslmode := os.Getenv("DB_SSLMODE")
 	tableName := os.Getenv("VOICE_CHANNEL_USER_TABLE")
 	apiPath := os.Getenv("API_PATH")
-	userAgent := os.Getenv("USER_AGENT")
 	securityCode := os.Getenv("SECURITYCODE")
 
 	connStr := fmt.Sprintf("user=%s password=%s dbname=%s host=%s port=%s sslmode=%s", user, password, dbname, host, dbPort, sslmode)
@@ -125,7 +124,7 @@ func main() {
 		totalTimeMap := mapToSlice(totalTime)
 
 		// Create handler for API with totalTimeMap
-		createHandleSessions(totalTimeMap, userAgent, securityCode)(w, r)
+		createHandleSessions(totalTimeMap, securityCode)(w, r)
 	})
 
 	// Launch the server and report errors if any
@@ -375,13 +374,8 @@ func CalculateTotalTimeForDate(sessions []Session, date time.Time) map[string]Se
 }
 
 // API handling with totalTime
-func createHandleSessions(sessionTimes []SessionTime, userAgent, securityCode string) http.HandlerFunc {
+func createHandleSessions(sessionTimes []SessionTime, securityCode string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		// Check User-Agent
-		if r.Header.Get("User-Agent") != userAgent {
-			http.Error(w, "Unauthorized User-Agent", http.StatusUnauthorized)
-			return
-		}
 
 		// Check Security-Code
 		if r.Header.Get("Security-Code") != securityCode {
