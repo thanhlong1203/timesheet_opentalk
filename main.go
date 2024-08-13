@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -63,17 +62,18 @@ func main() {
 
 	// Get environment variables from .env file
 	host := os.Getenv("DB_HOST")
-	port := os.Getenv("DB_PORT")
+	dbPort := os.Getenv("DB_PORT")
+	serverPort := os.Getenv("SERVER_PORT")
 	user := os.Getenv("DB_USERNAME")
 	dbname := os.Getenv("DB_DATABASE")
 	password := os.Getenv("DB_PASSWORD")
 	sslmode := os.Getenv("DB_SSLMODE")
 	tableName := os.Getenv("VOICE_CHANNEL_USER_TABLE")
-	api := os.Getenv("API_SERVER")
+	apiPath := os.Getenv("API_PATH")
 	userAgent := os.Getenv("USER_AGENT")
 	securityCode := os.Getenv("SECURITYCODE")
 
-	connStr := fmt.Sprintf("user=%s password=%s dbname=%s host=%s port=%s sslmode=%s", user, password, dbname, host, port, sslmode)
+	connStr := fmt.Sprintf("user=%s password=%s dbname=%s host=%s port=%s sslmode=%s", user, password, dbname, host, dbPort, sslmode)
 
 	// Get the current time and format it to a string according to RFC3339
 	now := time.Now()
@@ -99,8 +99,25 @@ func main() {
 	// Calculate the total time of each opentalk participant during the day
 	totalTime := CalculateTotalTimeForDate(filteredSessions, date)
 
-	// Send data to API server
-	SendRequest(api, userAgent, securityCode, totalTime)
+	totalTimeMap := mapToSlice(totalTime)
+
+	// Create handler for API with totalTimeMap
+	http.HandleFunc(apiPath, createHandleSessions(totalTimeMap, userAgent, securityCode))
+
+	// Launch the server and report errors if any
+	serverPort1 := ":" + serverPort
+	log.Printf("Starting server on port %s...", serverPort1)
+	if err := http.ListenAndServe(serverPort1, nil); err != nil {
+		log.Fatalf("Failed to start server: %v", err)
+	}
+}
+
+func mapToSlice(m map[string]SessionTime) []SessionTime {
+	var slice []SessionTime
+	for _, v := range m {
+		slice = append(slice, v)
+	}
+	return slice
 }
 
 // Get data from database
@@ -330,37 +347,24 @@ func CalculateTotalTimeForDate(sessions []Session, date time.Time) map[string]Se
 	return totalTimeMap
 }
 
-// SendRequest sends a POST request with JSON data to the API
-func SendRequest(url string, userAgent string, securityCode string, data interface{}) error {
-	// Convert data to JSON
-	jsonData, err := json.Marshal(data)
-	if err != nil {
-		return fmt.Errorf("failed to marshal data: %w", err)
+// API handling with totalTime
+func createHandleSessions(sessionTimes []SessionTime, userAgent, securityCode string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		// Check User-Agent
+		if r.Header.Get("User-Agent") != userAgent {
+			http.Error(w, "Unauthorized User-Agent", http.StatusUnauthorized)
+			return
+		}
+
+		// Check Security-Code
+		if r.Header.Get("Security-Code") != securityCode {
+			http.Error(w, "Unauthorized Security-Code", http.StatusUnauthorized)
+			return
+		}
+
+		// Settings header to return JSON
+		w.Header().Set("Content-Type", "application/json")
+
+		json.NewEncoder(w).Encode(sessionTimes)
 	}
-
-	// Create a POST request
-	req, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonData))
-	if err != nil {
-		return fmt.Errorf("failed to create request: %w", err)
-	}
-
-	// Setup headers
-	req.Header.Set("User-Agent", userAgent)
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("securityCode", securityCode)
-
-	// Send request
-	client := &http.Client{}
-	resp, err := client.Do(req)
-	if err != nil {
-		return fmt.Errorf("failed to send request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	// Check HTTP status codes
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("request failed with status code: %d", resp.StatusCode)
-	}
-
-	return nil
 }
