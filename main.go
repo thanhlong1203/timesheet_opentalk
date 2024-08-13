@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"math"
 	"net/http"
 	"os"
 	"sort"
@@ -42,17 +43,18 @@ type SessionTime struct {
 // Custom JSON marshaling
 func (s SessionTime) MarshalJSON() ([]byte, error) {
 	type Alias SessionTime
+	totalMinutes := int(math.Round(s.TotalTime.Minutes()))
 	return json.Marshal(&struct {
 		Name      string `json:"fullName"`
 		GoogleID  string `json:"googleId"`
-		TotalTime string `json:"totalTime"`
+		TotalTime int    `json:"totalTime"`
 		Date      string `json:"date"`
 		*Alias
 	}{
 		Name:     s.Name,
 		GoogleID: s.GoogleID,
 		// Convert `TotalTime` to string in the format "hh:mm:ss"
-		TotalTime: fmt.Sprintf("%02d:%02d:%02d", int64(s.TotalTime.Hours()), int64(s.TotalTime.Minutes())%60, int64(s.TotalTime.Seconds())%60),
+		TotalTime: totalMinutes,
 		// Format `Date` as a string in the format "yyyy-mm-dd" (adjust as needed)
 		Date:  s.Date.Format("2006-01-02"),
 		Alias: (*Alias)(&s),
@@ -81,34 +83,50 @@ func main() {
 
 	connStr := fmt.Sprintf("user=%s password=%s dbname=%s host=%s port=%s sslmode=%s", user, password, dbname, host, dbPort, sslmode)
 
-	// Get the current time and format it to a string according to RFC3339
-	now := time.Now()
-	utcNow := now.UTC()
-	twoDaysAgo := utcNow.AddDate(0, 0, -6)
-	formattedTime := twoDaysAgo.Format(time.RFC3339)
-	date := mustParseTime(formattedTime)
-
-	activities, err := FetchActivities(connStr, tableName, date)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	// Sort by name and creation time
-	SortActivities(activities)
-
-	// Handle user sessions
-	sessions := processActivities(activities)
-
-	// Filters sessions that reside entirely within other sessions
-	filteredSessions := FilterSessions(sessions)
-
-	// Calculate the total time of each opentalk participant during the day
-	totalTime := CalculateTotalTimeForDate(filteredSessions, date)
-
-	totalTimeMap := mapToSlice(totalTime)
-
 	// Create handler for API with totalTimeMap
-	http.HandleFunc(apiPath, createHandleSessions(totalTimeMap, userAgent, securityCode))
+	http.HandleFunc(apiPath, func(w http.ResponseWriter, r *http.Request) {
+		// Get time parameter from query string
+		timeParam := r.URL.Query().Get("time")
+
+		// Default to 6 days ago
+		now := time.Now()
+		utcNow := now.UTC()
+		twoDaysAgo := utcNow.AddDate(0, 0, -6)
+		date := twoDaysAgo
+
+		if timeParam != "" {
+			// Try parsing the custom format yyyy/mm/dd
+			parsedTime, err := parseCustomDateFormat(timeParam)
+			if err != nil {
+				log.Printf("Invalid time parameter (custom format): %v, using default time", err)
+			} else {
+				date = parsedTime
+			}
+		}
+
+		// Fetch activities and process them
+		activities, err := FetchActivities(connStr, tableName, date)
+		if err != nil {
+			log.Fatal(err)
+		}
+
+		// Sort by name and creation time
+		SortActivities(activities)
+
+		// Handle user sessions
+		sessions := processActivities(activities)
+
+		// Filters sessions that reside entirely within other sessions
+		filteredSessions := FilterSessions(sessions)
+
+		// Calculate the total time of each opentalk participant during the day
+		totalTime := CalculateTotalTimeForDate(filteredSessions, date)
+
+		totalTimeMap := mapToSlice(totalTime)
+
+		// Create handler for API with totalTimeMap
+		createHandleSessions(totalTimeMap, userAgent, securityCode)(w, r)
+	})
 
 	// Launch the server and report errors if any
 	serverPort1 := ":" + serverPort
@@ -116,6 +134,19 @@ func main() {
 	if err := http.ListenAndServe(serverPort1, nil); err != nil {
 		log.Fatalf("Failed to start server: %v", err)
 	}
+}
+
+// Convert yyyy/mm/dd to time.Time
+func parseCustomDateFormat(dateStr string) (time.Time, error) {
+	// Parse yyyy/mm/dd format
+	parsedDate, err := time.Parse("2006/01/02", dateStr)
+	if err != nil {
+		return time.Time{}, err
+	}
+
+	// Convert to RFC3339 format (yyyy-mm-ddThh:mm:ssZ)
+	// Set time to the beginning of the day in UTC
+	return time.Date(parsedDate.Year(), parsedDate.Month(), parsedDate.Day(), 0, 0, 0, 0, time.UTC), nil
 }
 
 func mapToSlice(m map[string]SessionTime) []SessionTime {
@@ -296,15 +327,6 @@ func FilterSessions(sessions []Session) []Session {
 	}
 
 	return filtered
-}
-
-// Format time to RFC3339
-func mustParseTime(value string) time.Time {
-	t, err := time.Parse(time.RFC3339, value)
-	if err != nil {
-		panic(err)
-	}
-	return t
 }
 
 // Calculate the total activity time of each user within a certain level in 1 day
