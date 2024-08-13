@@ -27,7 +27,6 @@ type VoiceChannelUser struct {
 
 type Session struct {
 	Name      string    `json:"fullName"`
-	Email     string    `json:"email"`
 	GoogleID  string    `json:"google_id"`
 	StartTime time.Time `json:"startTime"`
 	EndTime   time.Time `json:"endTime"`
@@ -35,21 +34,28 @@ type Session struct {
 
 type SessionTime struct {
 	Name      string        `json:"fullName"`
-	Email     string        `json:"email"`
 	GoogleID  string        `json:"googleId"`
 	TotalTime time.Duration `json:"totalTime"`
+	Date      time.Time     `json:"date"`
 }
 
 // Custom JSON marshaling
 func (s SessionTime) MarshalJSON() ([]byte, error) {
 	type Alias SessionTime
 	return json.Marshal(&struct {
+		Name      string `json:"fullName"`
+		GoogleID  string `json:"googleId"`
 		TotalTime string `json:"totalTime"`
+		Date      string `json:"date"`
 		*Alias
 	}{
+		Name:     s.Name,
+		GoogleID: s.GoogleID,
 		// Convert `TotalTime` to string in the format "hh:mm:ss"
 		TotalTime: fmt.Sprintf("%02d:%02d:%02d", int64(s.TotalTime.Hours()), int64(s.TotalTime.Minutes())%60, int64(s.TotalTime.Seconds())%60),
-		Alias:     (*Alias)(&s),
+		// Format `Date` as a string in the format "yyyy-mm-dd" (adjust as needed)
+		Date:  s.Date.Format("2006-01-02"),
+		Alias: (*Alias)(&s),
 	})
 }
 
@@ -205,7 +211,6 @@ func processActivities(activities []VoiceChannelUser) []Session {
 					}
 					currentSession = &Session{
 						Name:      activity.DisplayName,
-						Email:     "",
 						GoogleID:  activity.UserID,
 						StartTime: startTime,
 						EndTime:   endTime,
@@ -335,9 +340,9 @@ func CalculateTotalTimeForDate(sessions []Session, date time.Time) map[string]Se
 				} else {
 					totalTimeMap[userKey] = SessionTime{
 						Name:      s.Name,
-						Email:     s.Email,
 						GoogleID:  s.GoogleID,
 						TotalTime: duration,
+						Date:      startOfDay,
 					}
 				}
 			}
