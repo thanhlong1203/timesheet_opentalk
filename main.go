@@ -1,11 +1,11 @@
 package main
 
 import (
-	"bytes"
 	"database/sql"
 	"encoding/json"
 	"fmt"
 	"log"
+	"math"
 	"net/http"
 	"os"
 	"sort"
@@ -28,7 +28,6 @@ type VoiceChannelUser struct {
 
 type Session struct {
 	Name      string    `json:"fullName"`
-	Email     string    `json:"email"`
 	GoogleID  string    `json:"google_id"`
 	StartTime time.Time `json:"startTime"`
 	EndTime   time.Time `json:"endTime"`
@@ -36,21 +35,29 @@ type Session struct {
 
 type SessionTime struct {
 	Name      string        `json:"fullName"`
-	Email     string        `json:"email"`
 	GoogleID  string        `json:"googleId"`
 	TotalTime time.Duration `json:"totalTime"`
+	Date      time.Time     `json:"date"`
 }
 
 // Custom JSON marshaling
 func (s SessionTime) MarshalJSON() ([]byte, error) {
 	type Alias SessionTime
+	totalMinutes := int(math.Round(s.TotalTime.Minutes()))
 	return json.Marshal(&struct {
-		TotalTime string `json:"totalTime"`
+		Name      string `json:"fullName"`
+		GoogleID  string `json:"googleId"`
+		TotalTime int    `json:"totalTime"`
+		Date      string `json:"date"`
 		*Alias
 	}{
+		Name:     s.Name,
+		GoogleID: s.GoogleID,
 		// Convert `TotalTime` to string in the format "hh:mm:ss"
-		TotalTime: fmt.Sprintf("%02d:%02d:%02d", int64(s.TotalTime.Hours()), int64(s.TotalTime.Minutes())%60, int64(s.TotalTime.Seconds())%60),
-		Alias:     (*Alias)(&s),
+		TotalTime: totalMinutes,
+		// Format `Date` as a string in the format "yyyy-mm-dd" (adjust as needed)
+		Date:  s.Date.Format("2006-01-02"),
+		Alias: (*Alias)(&s),
 	})
 }
 
@@ -62,77 +69,96 @@ func main() {
 	}
 
 	// Get environment variables from .env file
-	user := os.Getenv("DB_USERNAME")
-	password := os.Getenv("DB_PASSWORD")
-	dbname := os.Getenv("DB_DATABASE")
 	host := os.Getenv("DB_HOST")
-	port := os.Getenv("DB_PORT")
+	dbPort := os.Getenv("DB_PORT")
+	serverPort := os.Getenv("SERVER_PORT")
+	user := os.Getenv("DB_USERNAME")
+	dbname := os.Getenv("DB_DATABASE")
+	password := os.Getenv("DB_PASSWORD")
 	sslmode := os.Getenv("DB_SSLMODE")
-	api := os.Getenv("API_SERVER")
+	tableName := os.Getenv("VOICE_CHANNEL_USER_TABLE")
+	apiPath := os.Getenv("API_PATH")
+	userAgent := os.Getenv("USER_AGENT")
+	securityCode := os.Getenv("SECURITYCODE")
 
-	connStr := fmt.Sprintf("user=%s password=%s dbname=%s host=%s port=%s sslmode=%s", user, password, dbname, host, port, sslmode)
+	connStr := fmt.Sprintf("user=%s password=%s dbname=%s host=%s port=%s sslmode=%s", user, password, dbname, host, dbPort, sslmode)
 
-	// Get the current time and format it to a string according to RFC3339
-	now := time.Now()
-	utcNow := now.UTC()
-	twoDaysAgo := utcNow.AddDate(0, 0, -6)           // Lấy ngày 06/08/2024
-	formattedTime := twoDaysAgo.Format(time.RFC3339) // Định dạng thời gian thành chuỗi theo RFC3339
-	date := mustParseTime(formattedTime)
-	fmt.Println("Time: ", formattedTime)
+	// Create handler for API with totalTimeMap
+	http.HandleFunc(apiPath, func(w http.ResponseWriter, r *http.Request) {
+		// Get time parameter from query string
+		timeParam := r.URL.Query().Get("time")
 
-	activities, err := FetchActivities(connStr, date)
+		// Default to 6 days ago
+		now := time.Now()
+		utcNow := now.UTC()
+		twoDaysAgo := utcNow.AddDate(0, 0, -6)
+		date := twoDaysAgo
+
+		if timeParam != "" {
+			// Try parsing the custom format yyyy/mm/dd
+			parsedTime, err := parseCustomDateFormat(timeParam)
+			if err != nil {
+				log.Printf("Invalid time parameter (custom format): %v, using default time", err)
+			} else {
+				date = parsedTime
+			}
+		}
+
+		// Fetch activities and process them
+		activities, err := FetchActivities(connStr, tableName, date)
+		if err != nil {
+			log.Fatal(err)
+		}
+
+		// Sort by name and creation time
+		SortActivities(activities)
+
+		// Handle user sessions
+		sessions := processActivities(activities)
+
+		// Filters sessions that reside entirely within other sessions
+		filteredSessions := FilterSessions(sessions)
+
+		// Calculate the total time of each opentalk participant during the day
+		totalTime := CalculateTotalTimeForDate(filteredSessions, date)
+
+		totalTimeMap := mapToSlice(totalTime)
+
+		// Create handler for API with totalTimeMap
+		createHandleSessions(totalTimeMap, userAgent, securityCode)(w, r)
+	})
+
+	// Launch the server and report errors if any
+	serverPort1 := ":" + serverPort
+	log.Printf("Starting server on port %s...", serverPort1)
+	if err := http.ListenAndServe(serverPort1, nil); err != nil {
+		log.Fatalf("Failed to start server: %v", err)
+	}
+}
+
+// Convert yyyy/mm/dd to time.Time
+func parseCustomDateFormat(dateStr string) (time.Time, error) {
+	// Parse yyyy/mm/dd format
+	parsedDate, err := time.Parse("2006/01/02", dateStr)
 	if err != nil {
-		log.Fatal(err)
+		return time.Time{}, err
 	}
 
-	// Sort by name and creation time
-	SortActivities(activities)
+	// Convert to RFC3339 format (yyyy-mm-ddThh:mm:ssZ)
+	// Set time to the beginning of the day in UTC
+	return time.Date(parsedDate.Year(), parsedDate.Month(), parsedDate.Day(), 0, 0, 0, 0, time.UTC), nil
+}
 
-	// In ra danh sách hoạt động
-	fmt.Println("------------------------------------------------------------------------------------------------")
-	fmt.Println("Activities")
-	for _, activity := range activities {
-		fmt.Printf("ID: %d, UserId: %s, ClanID: %d, ChannelID: %d, DisplayName: %s, CreateTime: %s, UpdateTime: %s, Active: %d\n",
-			activity.ID, activity.UserID, activity.ClanID, activity.ChannelID, activity.DisplayName, activity.CreateTime, activity.UpdateTime, activity.Active)
+func mapToSlice(m map[string]SessionTime) []SessionTime {
+	var slice []SessionTime
+	for _, v := range m {
+		slice = append(slice, v)
 	}
-
-	// Handle user sessions
-	sessions := processActivities(activities)
-
-	// In ra danh sách phiên hoạt động
-	fmt.Println("------------------------------------------------------------------------------------------------")
-	fmt.Println("Sessions")
-	for _, session := range sessions {
-		fmt.Printf("DisplayName: %s, Email: %s, GoogleID: %s ,StartTime: %s,EndTime: %s\n",
-			session.Name, session.Email, session.GoogleID, session.StartTime.Format(time.RFC3339), session.EndTime.Format(time.RFC3339))
-	}
-
-	// Filters sessions that reside entirely within other sessions
-	filteredSessions := FilterSessions(sessions)
-
-	fmt.Println("------------------------------------------------------------------------------------------------")
-	fmt.Println("filteredSessions")
-	for _, session := range filteredSessions {
-		fmt.Printf("DisplayName: %s, Email: %s, GoogleID: %s ,StartTime: %s,EndTime: %s\n",
-			session.Name, session.Email, session.GoogleID, session.StartTime.Format(time.RFC3339), session.EndTime.Format(time.RFC3339))
-	}
-
-	// Calculate the total time of each opentalk participant during the day
-	totalTime := CalculateTotalTimeForDate(filteredSessions, date)
-
-	fmt.Println("------------------------------------------------------------------------------------------------")
-	fmt.Println("TotalTime")
-	for _, sessionTime := range totalTime {
-		fmt.Printf("Name: %s, Email: %s, GoogleID: %s, TotalTime: %v\n",
-			sessionTime.Name, sessionTime.Email, sessionTime.GoogleID, sessionTime.TotalTime)
-	}
-
-	// Send data to API server
-	SendRequest(api, totalTime)
+	return slice
 }
 
 // Get data from database
-func FetchActivities(connStr string, date time.Time) ([]VoiceChannelUser, error) {
+func FetchActivities(connStr string, tableName string, date time.Time) ([]VoiceChannelUser, error) {
 	db, err := sql.Open("postgres", connStr)
 	if err != nil {
 		return nil, err
@@ -143,17 +169,9 @@ func FetchActivities(connStr string, date time.Time) ([]VoiceChannelUser, error)
 	startOfDay := time.Date(date.Year(), date.Month(), date.Day(), 0, 0, 0, 0, time.UTC)
 	endOfDay := startOfDay.Add(24 * time.Hour).Add(-time.Second)
 
-	// Print start and end of day for debugging
-	fmt.Println("startOfDay: ", startOfDay)
-	fmt.Println("endOfDay: ", endOfDay)
-
 	startOfDayStr := startOfDay.Format(time.RFC3339)
 	endOfDayStr := endOfDay.Format(time.RFC3339)
 
-	tableName := os.Getenv("VOICE_CHANNEL_USER_TABLE")
-	if tableName == "" {
-		return nil, fmt.Errorf("table name not set in environment")
-	}
 	query := fmt.Sprintf("SELECT * FROM %s WHERE create_time BETWEEN $1 AND $2", tableName)
 	rows, err := db.Query(query, startOfDayStr, endOfDayStr)
 	if err != nil {
@@ -224,7 +242,6 @@ func processActivities(activities []VoiceChannelUser) []Session {
 					}
 					currentSession = &Session{
 						Name:      activity.DisplayName,
-						Email:     "",
 						GoogleID:  activity.UserID,
 						StartTime: startTime,
 						EndTime:   endTime,
@@ -312,28 +329,14 @@ func FilterSessions(sessions []Session) []Session {
 	return filtered
 }
 
-// Format time to RFC3339
-func mustParseTime(value string) time.Time {
-	t, err := time.Parse(time.RFC3339, value)
-	if err != nil {
-		panic(err)
-	}
-	return t
-}
-
 // Calculate the total activity time of each user within a certain level in 1 day
 func CalculateTotalTimeForDate(sessions []Session, date time.Time) map[string]SessionTime {
 	totalTimeMap := make(map[string]SessionTime)
-	fmt.Println("Time2: ", date)
 
 	// Determine the time interval from 3 to 5 UTC (10 to 12 UTC +7)
 	startOfDay := date.Truncate(24 * time.Hour)
-	fmt.Println("startOfDay: ", startOfDay)
 	start3h := startOfDay.Add(3 * time.Hour)
-	fmt.Println("start3h: ", start3h)
-
 	end5h := startOfDay.Add(5 * time.Hour)
-	fmt.Println("end5h: ", end5h)
 
 	for _, s := range sessions {
 		// Check if the session is on the specified date
@@ -359,9 +362,9 @@ func CalculateTotalTimeForDate(sessions []Session, date time.Time) map[string]Se
 				} else {
 					totalTimeMap[userKey] = SessionTime{
 						Name:      s.Name,
-						Email:     s.Email,
 						GoogleID:  s.GoogleID,
 						TotalTime: duration,
+						Date:      startOfDay,
 					}
 				}
 			}
@@ -371,37 +374,24 @@ func CalculateTotalTimeForDate(sessions []Session, date time.Time) map[string]Se
 	return totalTimeMap
 }
 
-// SendRequest sends a POST request with JSON data to the API
-func SendRequest(url string, data interface{}) error {
-	// Convert data to JSON
-	jsonData, err := json.Marshal(data)
-	if err != nil {
-		return fmt.Errorf("failed to marshal data: %w", err)
+// API handling with totalTime
+func createHandleSessions(sessionTimes []SessionTime, userAgent, securityCode string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		// Check User-Agent
+		if r.Header.Get("User-Agent") != userAgent {
+			http.Error(w, "Unauthorized User-Agent", http.StatusUnauthorized)
+			return
+		}
+
+		// Check Security-Code
+		if r.Header.Get("Security-Code") != securityCode {
+			http.Error(w, "Unauthorized Security-Code", http.StatusUnauthorized)
+			return
+		}
+
+		// Settings header to return JSON
+		w.Header().Set("Content-Type", "application/json")
+
+		json.NewEncoder(w).Encode(sessionTimes)
 	}
-
-	// Create a POST request
-	req, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonData))
-	if err != nil {
-		return fmt.Errorf("failed to create request: %w", err)
-	}
-
-	// Setup headers
-	req.Header.Set("User-Agent", "Reqable/2.21.0")
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("securityCode", "12345678")
-
-	// Send request
-	client := &http.Client{}
-	resp, err := client.Do(req)
-	if err != nil {
-		return fmt.Errorf("failed to send request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	// Check HTTP status codes
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("request failed with status code: %d", resp.StatusCode)
-	}
-
-	return nil
 }
