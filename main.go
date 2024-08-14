@@ -71,102 +71,55 @@ func main() {
 	// Get environment variables from .env file
 	host := os.Getenv("DB_HOST")
 	dbPort := os.Getenv("DB_PORT")
-	serverPort := os.Getenv("SERVER_PORT")
 	user := os.Getenv("DB_USERNAME")
 	dbname := os.Getenv("DB_DATABASE")
 	password := os.Getenv("DB_PASSWORD")
 	sslmode := os.Getenv("DB_SSLMODE")
 	tableName := os.Getenv("VOICE_CHANNEL_USER_TABLE")
-	apiPath := os.Getenv("API_PATH")
-	securityCode := os.Getenv("SECURITYCODE")
 
 	connStr := fmt.Sprintf("user=%s password=%s dbname=%s host=%s port=%s sslmode=%s", user, password, dbname, host, dbPort, sslmode)
 
-	// Create handler for API with totalTimeMap
-	http.HandleFunc(apiPath, func(w http.ResponseWriter, r *http.Request) {
-		// Get time parameter from query string
-		timeParam := r.URL.Query().Get("time")
-		clanID := r.URL.Query().Get("clanID")
+	// Default to 6 days ago
+	now := time.Now()
+	utcNow := now.UTC()
+	twoDaysAgo := utcNow.AddDate(0, 0, -7)
+	date := twoDaysAgo
 
-		// Default to 6 days ago
-		now := time.Now()
-		utcNow := now.UTC()
-		twoDaysAgo := utcNow.AddDate(0, 0, -6)
-		date := twoDaysAgo
-
-		if timeParam != "" {
-			// Try parsing the custom format yyyy/mm/dd
-			parsedTime, err := parseCustomDateFormat(timeParam)
-			if err != nil {
-				log.Printf("Invalid time parameter (custom format): %v, using default time", err)
-			} else {
-				date = parsedTime
-			}
-		}
-
-		// Fetch activities and process them
-		activities, err := FetchActivities(connStr, tableName, date, clanID)
-		if err != nil {
-			log.Fatal(err)
-		}
-
-		// Sort by name and creation time
-		SortActivities(activities)
-
-		// Handle user sessions
-		sessions := processActivities(activities)
-
-		// Filters sessions that reside entirely within other sessions
-		filteredSessions := FilterSessions(sessions)
-
-		// Calculate the total time of each opentalk participant during the day
-		totalTime := CalculateTotalTimeForDate(filteredSessions, date)
-
-		fmt.Println("------------------------------------------------------------------------------------------------")
-		fmt.Println("TotalTime")
-		for _, sessionTime := range totalTime {
-			totalMinutes := int(math.Round(sessionTime.TotalTime.Minutes()))
-			fmt.Printf("Name: %s, GoogleID: %s, TotalTime: %v, Date: %s\n",
-				sessionTime.Name, sessionTime.GoogleID, totalMinutes, sessionTime.Date.Format("2006-01-02"))
-		}
-
-		totalTimeMap := mapToSlice(totalTime)
-
-		// Create handler for API with totalTimeMap
-		createHandleSessions(totalTimeMap, securityCode)(w, r)
-	})
-
-	// Launch the server and report errors if any
-	serverPort1 := ":" + serverPort
-	log.Printf("Starting server on port %s...", serverPort1)
-	if err := http.ListenAndServe(serverPort1, nil); err != nil {
-		log.Fatalf("Failed to start server: %v", err)
-	}
-}
-
-// Convert yyyy/mm/dd to time.Time
-func parseCustomDateFormat(dateStr string) (time.Time, error) {
-	// Parse yyyy/mm/dd format
-	parsedDate, err := time.Parse("2006/01/02", dateStr)
+	// Fetch activities and process them
+	activities, err := FetchActivities(connStr, tableName, date)
 	if err != nil {
-		return time.Time{}, err
+		log.Fatal(err)
 	}
 
-	// Convert to RFC3339 format (yyyy-mm-ddThh:mm:ssZ)
-	// Set time to the beginning of the day in UTC
-	return time.Date(parsedDate.Year(), parsedDate.Month(), parsedDate.Day(), 0, 0, 0, 0, time.UTC), nil
-}
+	// Sort by name and creation time
+	SortActivities(activities)
 
-func mapToSlice(m map[string]SessionTime) []SessionTime {
-	var slice []SessionTime
-	for _, v := range m {
-		slice = append(slice, v)
+	// Handle user sessions
+	sessions := processActivities(activities)
+
+	// Filters sessions that reside entirely within other sessions
+	filteredSessions := FilterSessions(sessions)
+
+	// Calculate the total time of each opentalk participant during the day
+	totalTime := CalculateTotalTimeForDate(filteredSessions, date)
+
+	fmt.Println("------------------------------------------------------------------------------------------------")
+	fmt.Println("TotalTime: ", date.Format("2006/01/02"))
+	for _, sessionTime := range totalTime {
+		// Format the total time in hours, minutes, and seconds
+		totalMinutes := fmt.Sprintf("%02d:%02d:%02d",
+			int64(sessionTime.TotalTime.Hours()),
+			int64(sessionTime.TotalTime.Minutes())%60,
+			int64(sessionTime.TotalTime.Seconds())%60)
+
+		// Print the formatted total time
+		fmt.Printf("Name: %s, TotalTime: %s\n",
+			sessionTime.Name, totalMinutes)
 	}
-	return slice
 }
 
 // Get data from database
-func FetchActivities(connStr string, tableName string, date time.Time, clandID string) ([]VoiceChannelUser, error) {
+func FetchActivities(connStr string, tableName string, date time.Time) ([]VoiceChannelUser, error) {
 	db, err := sql.Open("postgres", connStr)
 	if err != nil {
 		return nil, err
@@ -181,15 +134,7 @@ func FetchActivities(connStr string, tableName string, date time.Time, clandID s
 	endOfDayStr := endOfDay.Format(time.RFC3339)
 
 	query := fmt.Sprintf("SELECT * FROM %s WHERE create_time BETWEEN $1 AND $2", tableName)
-
-	var rows *sql.Rows
-	if clandID == "" {
-		rows, err = db.Query(query, startOfDayStr, endOfDayStr)
-	} else {
-		query += " AND clan_id = $3"
-		rows, err = db.Query(query, startOfDayStr, endOfDayStr, clandID)
-	}
-
+	rows, err := db.Query(query, startOfDayStr, endOfDayStr)
 	if err != nil {
 		return nil, err
 	}
