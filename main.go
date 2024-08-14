@@ -122,6 +122,14 @@ func main() {
 		// Calculate the total time of each opentalk participant during the day
 		totalTime := CalculateTotalTimeForDate(filteredSessions, date)
 
+		fmt.Println("------------------------------------------------------------------------------------------------")
+		fmt.Println("TotalTime")
+		for _, sessionTime := range totalTime {
+			totalMinutes := int(math.Round(sessionTime.TotalTime.Minutes()))
+			fmt.Printf("Name: %s, GoogleID: %s, TotalTime: %v, Date: %s\n",
+				sessionTime.Name, sessionTime.GoogleID, totalMinutes, sessionTime.Date.Format("2006-01-02"))
+		}
+
 		totalTimeMap := mapToSlice(totalTime)
 
 		// Create handler for API with totalTimeMap
