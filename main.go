@@ -86,6 +86,7 @@ func main() {
 	http.HandleFunc(apiPath, func(w http.ResponseWriter, r *http.Request) {
 		// Get time parameter from query string
 		timeParam := r.URL.Query().Get("time")
+		clanID := r.URL.Query().Get("clanID")
 
 		// Default to 6 days ago
 		now := time.Now()
@@ -104,7 +105,7 @@ func main() {
 		}
 
 		// Fetch activities and process them
-		activities, err := FetchActivities(connStr, tableName, date)
+		activities, err := FetchActivities(connStr, tableName, date, clanID)
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -157,7 +158,7 @@ func mapToSlice(m map[string]SessionTime) []SessionTime {
 }
 
 // Get data from database
-func FetchActivities(connStr string, tableName string, date time.Time) ([]VoiceChannelUser, error) {
+func FetchActivities(connStr string, tableName string, date time.Time, clandID string) ([]VoiceChannelUser, error) {
 	db, err := sql.Open("postgres", connStr)
 	if err != nil {
 		return nil, err
@@ -172,7 +173,15 @@ func FetchActivities(connStr string, tableName string, date time.Time) ([]VoiceC
 	endOfDayStr := endOfDay.Format(time.RFC3339)
 
 	query := fmt.Sprintf("SELECT * FROM %s WHERE create_time BETWEEN $1 AND $2", tableName)
-	rows, err := db.Query(query, startOfDayStr, endOfDayStr)
+
+	var rows *sql.Rows
+	if clandID == "" {
+		rows, err = db.Query(query, startOfDayStr, endOfDayStr)
+	} else {
+		query += " AND clan_id = $3"
+		rows, err = db.Query(query, startOfDayStr, endOfDayStr, clandID)
+	}
+
 	if err != nil {
 		return nil, err
 	}
