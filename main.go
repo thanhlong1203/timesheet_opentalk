@@ -88,10 +88,10 @@ func main() {
 		timeParam := r.URL.Query().Get("time")
 		clanID := r.URL.Query().Get("clanID")
 
-		// Default to 6 days ago
+		// Default to 2 days ago
 		now := time.Now()
 		utcNow := now.UTC()
-		twoDaysAgo := utcNow.AddDate(0, 0, -6)
+		twoDaysAgo := utcNow.AddDate(0, 0, -2)
 		date := twoDaysAgo
 
 		if timeParam != "" {
@@ -121,14 +121,6 @@ func main() {
 
 		// Calculate the total time of each opentalk participant during the day
 		totalTime := CalculateTotalTimeForDate(filteredSessions, date)
-
-		fmt.Println("------------------------------------------------------------------------------------------------")
-		fmt.Println("TotalTime")
-		for _, sessionTime := range totalTime {
-			totalMinutes := int(math.Round(sessionTime.TotalTime.Minutes()))
-			fmt.Printf("Name: %s, GoogleID: %s, TotalTime: %v, Date: %s\n",
-				sessionTime.Name, sessionTime.GoogleID, totalMinutes, sessionTime.Date.Format("2006-01-02"))
-		}
 
 		totalTimeMap := mapToSlice(totalTime)
 
