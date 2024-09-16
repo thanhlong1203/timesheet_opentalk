@@ -112,6 +112,13 @@ func main() {
 
 		// Sort by name and creation time
 		SortActivities(activities)
+		// In ra danh sách hoạt động
+		fmt.Println("------------------------------------------------------------------------------------------------")
+		fmt.Println("Activities")
+		for _, activity := range activities {
+			fmt.Printf("ID: %d, UserId: %s, ClanID: %d, ChannelID: %d, DisplayName: %s, CreateTime: %s, UpdateTime: %s, Active: %d\n",
+				activity.ID, activity.UserID, activity.ClanID, activity.ChannelID, activity.DisplayName, activity.CreateTime, activity.UpdateTime, activity.Active)
+		}
 
 		// Handle user sessions
 		sessions := processActivities(activities)
@@ -119,8 +126,28 @@ func main() {
 		// Filters sessions that reside entirely within other sessions
 		filteredSessions := FilterSessions(sessions)
 
+		fmt.Println("------------------------------------------------------------------------------------------------")
+		fmt.Println("filteredSessions")
+		for _, session := range filteredSessions {
+			fmt.Printf("DisplayName: %s, GoogleID: %s ,StartTime: %s,EndTime: %s\n",
+				session.Name, session.GoogleID, session.StartTime.Format(time.RFC3339), session.EndTime.Format(time.RFC3339))
+		}
+
 		// Calculate the total time of each opentalk participant during the day
 		totalTime := CalculateTotalTimeForDate(filteredSessions, date)
+		fmt.Println("------------------------------------------------------------------------------------------------")
+		fmt.Println("TotalTime: ", date.Format("2006/01/02"))
+		for _, sessionTime := range totalTime {
+			// Format the total time in hours, minutes, and seconds
+			totalMinutes := fmt.Sprintf("%02d:%02d:%02d",
+				int64(sessionTime.TotalTime.Hours()),
+				int64(sessionTime.TotalTime.Minutes())%60,
+				int64(sessionTime.TotalTime.Seconds())%60)
+
+			// Print the formatted total time
+			fmt.Printf("Name: %s, TotalTime: %s\n",
+				sessionTime.Name, totalMinutes)
+		}
 
 		totalTimeMap := mapToSlice(totalTime)
 
@@ -345,6 +372,8 @@ func CalculateTotalTimeForDate(sessions []Session, date time.Time) map[string]Se
 	startOfDay := date.Truncate(24 * time.Hour)
 	start3h := startOfDay.Add(3 * time.Hour)
 	end5h := startOfDay.Add(5 * time.Hour)
+	log.Println("StartUTC", start3h)
+	log.Println("EndUTC", end5h)
 
 	for _, s := range sessions {
 		// Check if the session is on the specified date
