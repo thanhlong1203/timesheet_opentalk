@@ -91,7 +91,7 @@ func main() {
 	// Default to 2 days ago
 	now := time.Now()
 	utcNow := now.UTC()
-	twoDaysAgo := utcNow.AddDate(0, 0, -40)
+	twoDaysAgo := utcNow.AddDate(0, 0, -2)
 	date := twoDaysAgo
 
 	// if timeParam != "" {
@@ -122,6 +122,12 @@ func main() {
 
 	// Handle user sessions
 	sessions := processActivities(activities)
+	fmt.Println("------------------------------------------------------------------------------------------------")
+	fmt.Println("Sessions")
+	for _, session := range sessions {
+		fmt.Printf("DisplayName: %s, GoogleID: %s ,StartTime: %s,EndTime: %s\n",
+			session.Name, session.GoogleID, session.StartTime.Format(time.RFC3339), session.EndTime.Format(time.RFC3339))
+	}
 
 	// Filters sessions that reside entirely within other sessions
 	filteredSessions := FilterSessions(sessions)
