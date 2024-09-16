@@ -71,96 +71,96 @@ func main() {
 	// Get environment variables from .env file
 	host := os.Getenv("DB_HOST")
 	dbPort := os.Getenv("DB_PORT")
-	serverPort := os.Getenv("SERVER_PORT")
+	// serverPort := os.Getenv("SERVER_PORT")
 	user := os.Getenv("DB_USERNAME")
 	dbname := os.Getenv("DB_DATABASE")
 	password := os.Getenv("DB_PASSWORD")
 	sslmode := os.Getenv("DB_SSLMODE")
 	tableName := os.Getenv("VOICE_CHANNEL_USER_TABLE")
-	apiPath := os.Getenv("API_PATH")
-	securityCode := os.Getenv("SECURITYCODE")
+	// apiPath := os.Getenv("API_PATH")
+	// securityCode := os.Getenv("SECURITYCODE")
 
 	connStr := fmt.Sprintf("user=%s password=%s dbname=%s host=%s port=%s sslmode=%s", user, password, dbname, host, dbPort, sslmode)
 
 	// Create handler for API with totalTimeMap
-	http.HandleFunc(apiPath, func(w http.ResponseWriter, r *http.Request) {
-		// Get time parameter from query string
-		timeParam := r.URL.Query().Get("time")
-		clanID := r.URL.Query().Get("clanID")
+	// http.HandleFunc(apiPath, func(w http.ResponseWriter, r *http.Request) {
+	// Get time parameter from query string
+	// timeParam := r.URL.Query().Get("time")
+	// clanID := r.URL.Query().Get("clanID")
 
-		// Default to 2 days ago
-		now := time.Now()
-		utcNow := now.UTC()
-		twoDaysAgo := utcNow.AddDate(0, 0, -2)
-		date := twoDaysAgo
+	// Default to 2 days ago
+	now := time.Now()
+	utcNow := now.UTC()
+	twoDaysAgo := utcNow.AddDate(0, 0, -40)
+	date := twoDaysAgo
 
-		if timeParam != "" {
-			// Try parsing the custom format yyyy/mm/dd
-			parsedTime, err := parseCustomDateFormat(timeParam)
-			if err != nil {
-				log.Printf("Invalid time parameter (custom format): %v, using default time", err)
-			} else {
-				date = parsedTime
-			}
-		}
+	// if timeParam != "" {
+	// 	// Try parsing the custom format yyyy/mm/dd
+	// 	parsedTime, err := parseCustomDateFormat(timeParam)
+	// 	if err != nil {
+	// 		log.Printf("Invalid time parameter (custom format): %v, using default time", err)
+	// 	} else {
+	// 		date = parsedTime
+	// 	}
+	// }
 
-		// Fetch activities and process them
-		activities, err := FetchActivities(connStr, tableName, date, clanID)
-		if err != nil {
-			log.Fatal(err)
-		}
+	// Fetch activities and process them
+	activities, err := FetchActivities(connStr, tableName, date, "")
+	if err != nil {
+		log.Fatal(err)
+	}
 
-		// Sort by name and creation time
-		SortActivities(activities)
-		// In ra danh sách hoạt động
-		fmt.Println("------------------------------------------------------------------------------------------------")
-		fmt.Println("Activities")
-		for _, activity := range activities {
-			fmt.Printf("ID: %d, UserId: %s, ClanID: %d, ChannelID: %d, DisplayName: %s, CreateTime: %s, UpdateTime: %s, Active: %d\n",
-				activity.ID, activity.UserID, activity.ClanID, activity.ChannelID, activity.DisplayName, activity.CreateTime, activity.UpdateTime, activity.Active)
-		}
+	// Sort by name and creation time
+	SortActivities(activities)
+	// In ra danh sách hoạt động
+	fmt.Println("------------------------------------------------------------------------------------------------")
+	fmt.Println("Activities")
+	for _, activity := range activities {
+		fmt.Printf("ID: %d, UserId: %s, ClanID: %d, ChannelID: %d, DisplayName: %s, CreateTime: %s, UpdateTime: %s, Active: %d\n",
+			activity.ID, activity.UserID, activity.ClanID, activity.ChannelID, activity.DisplayName, activity.CreateTime, activity.UpdateTime, activity.Active)
+	}
 
-		// Handle user sessions
-		sessions := processActivities(activities)
+	// Handle user sessions
+	sessions := processActivities(activities)
 
-		// Filters sessions that reside entirely within other sessions
-		filteredSessions := FilterSessions(sessions)
+	// Filters sessions that reside entirely within other sessions
+	filteredSessions := FilterSessions(sessions)
 
-		fmt.Println("------------------------------------------------------------------------------------------------")
-		fmt.Println("filteredSessions")
-		for _, session := range filteredSessions {
-			fmt.Printf("DisplayName: %s, GoogleID: %s ,StartTime: %s,EndTime: %s\n",
-				session.Name, session.GoogleID, session.StartTime.Format(time.RFC3339), session.EndTime.Format(time.RFC3339))
-		}
+	fmt.Println("------------------------------------------------------------------------------------------------")
+	fmt.Println("filteredSessions")
+	for _, session := range filteredSessions {
+		fmt.Printf("DisplayName: %s, GoogleID: %s ,StartTime: %s,EndTime: %s\n",
+			session.Name, session.GoogleID, session.StartTime.Format(time.RFC3339), session.EndTime.Format(time.RFC3339))
+	}
 
-		// Calculate the total time of each opentalk participant during the day
-		totalTime := CalculateTotalTimeForDate(filteredSessions, date)
-		fmt.Println("------------------------------------------------------------------------------------------------")
-		fmt.Println("TotalTime: ", date.Format("2006/01/02"))
-		for _, sessionTime := range totalTime {
-			// Format the total time in hours, minutes, and seconds
-			totalMinutes := fmt.Sprintf("%02d:%02d:%02d",
-				int64(sessionTime.TotalTime.Hours()),
-				int64(sessionTime.TotalTime.Minutes())%60,
-				int64(sessionTime.TotalTime.Seconds())%60)
+	// Calculate the total time of each opentalk participant during the day
+	totalTime := CalculateTotalTimeForDate(filteredSessions, date)
+	fmt.Println("------------------------------------------------------------------------------------------------")
+	fmt.Println("TotalTime: ", date.Format("2006/01/02"))
+	for _, sessionTime := range totalTime {
+		// Format the total time in hours, minutes, and seconds
+		totalMinutes := fmt.Sprintf("%02d:%02d:%02d",
+			int64(sessionTime.TotalTime.Hours()),
+			int64(sessionTime.TotalTime.Minutes())%60,
+			int64(sessionTime.TotalTime.Seconds())%60)
 
-			// Print the formatted total time
-			fmt.Printf("Name: %s, TotalTime: %s\n",
-				sessionTime.Name, totalMinutes)
-		}
+		// Print the formatted total time
+		fmt.Printf("Name: %s, TotalTime: %s\n",
+			sessionTime.Name, totalMinutes)
+	}
 
-		totalTimeMap := mapToSlice(totalTime)
+	// totalTimeMap := mapToSlice(totalTime)
 
-		// Create handler for API with totalTimeMap
-		createHandleSessions(totalTimeMap, securityCode)(w, r)
-	})
+	// Create handler for API with totalTimeMap
+	// createHandleSessions(totalTimeMap, securityCode)(w, r)
+	// })
 
 	// Launch the server and report errors if any
-	serverPort1 := ":" + serverPort
-	log.Printf("Starting server on port %s...", serverPort1)
-	if err := http.ListenAndServe(serverPort1, nil); err != nil {
-		log.Fatalf("Failed to start server: %v", err)
-	}
+	// serverPort1 := ":" + serverPort
+	// log.Printf("Starting server on port %s...", serverPort1)
+	// if err := http.ListenAndServe(serverPort1, nil); err != nil {
+	// 	log.Fatalf("Failed to start server: %v", err)
+	// }
 }
 
 // Convert yyyy/mm/dd to time.Time
