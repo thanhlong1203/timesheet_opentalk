@@ -91,7 +91,8 @@ func main() {
 	// Default to 2 days ago
 	now := time.Now()
 	utcNow := now.UTC()
-	twoDaysAgo := utcNow.AddDate(0, 0, -2)
+	// twoDaysAgo := utcNow.AddDate(0, 0, -41)
+	twoDaysAgo := utcNow.AddDate(0, 0, -3)
 	date := twoDaysAgo
 
 	// if timeParam != "" {
@@ -145,14 +146,9 @@ func main() {
 	fmt.Println("TotalTime: ", date.Format("2006/01/02"))
 	for _, sessionTime := range totalTime {
 		// Format the total time in hours, minutes, and seconds
-		totalMinutes := fmt.Sprintf("%02d:%02d:%02d",
-			int64(sessionTime.TotalTime.Hours()),
-			int64(sessionTime.TotalTime.Minutes())%60,
-			int64(sessionTime.TotalTime.Seconds())%60)
-
-		// Print the formatted total time
-		fmt.Printf("Name: %s, TotalTime: %s\n",
-			sessionTime.Name, totalMinutes)
+		totalMinutes := int(math.Round(sessionTime.TotalTime.Minutes()))
+		fmt.Printf("Name: %s, TotalTime: %v, Date: %s\n",
+			sessionTime.Name, totalMinutes, sessionTime.Date.Format("2006-01-02"))
 	}
 
 	// totalTimeMap := mapToSlice(totalTime)
@@ -270,45 +266,34 @@ func processActivities(activities []VoiceChannelUser) []Session {
 	for _, userActivities := range userSessions {
 		var currentSession *Session
 		for _, activity := range userActivities {
-			if activity.Active == 2 {
-				if currentSession == nil {
-					startTime, err := time.Parse(timeLayout, activity.CreateTime)
-					if err != nil {
-						return nil
-					}
-
-					endTime, err := time.Parse(timeLayout, activity.UpdateTime)
-					if err != nil {
-						return nil
-					}
-					currentSession = &Session{
-						Name:      activity.DisplayName,
-						GoogleID:  activity.UserID,
-						StartTime: startTime,
-						EndTime:   endTime,
-					}
-				} else {
-					startTime, err := time.Parse(timeLayout, activity.CreateTime)
-					if err != nil {
-						return nil
-					}
-
-					endTime, err := time.Parse(timeLayout, activity.UpdateTime)
-					if err != nil {
-						return nil
-					}
-					currentSession.StartTime = minTime(currentSession.StartTime, startTime)
-					currentSession.EndTime = maxTime(currentSession.EndTime, endTime)
+			if currentSession == nil {
+				startTime, err := time.Parse(timeLayout, activity.CreateTime)
+				if err != nil {
+					return nil
 				}
 
-			} else if activity.Active == 0 && currentSession != nil {
 				endTime, err := time.Parse(timeLayout, activity.UpdateTime)
 				if err != nil {
 					return nil
 				}
+				currentSession = &Session{
+					Name:      activity.DisplayName,
+					GoogleID:  activity.UserID,
+					StartTime: startTime,
+					EndTime:   endTime,
+				}
+			} else {
+				startTime, err := time.Parse(timeLayout, activity.CreateTime)
+				if err != nil {
+					return nil
+				}
+
+				endTime, err := time.Parse(timeLayout, activity.UpdateTime)
+				if err != nil {
+					return nil
+				}
+				currentSession.StartTime = minTime(currentSession.StartTime, startTime)
 				currentSession.EndTime = maxTime(currentSession.EndTime, endTime)
-				sessions = append(sessions, *currentSession)
-				currentSession = nil
 			}
 		}
 		if currentSession != nil {
